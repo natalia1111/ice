@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Интерактивный ледяной керн</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root{
+      --bg:#f4f7fb; --panel:#ffffff; --text:#1f2937; --muted:#64748b; --accent:#2563eb;
+      --axis:#334155; --ice:#eef2f7; --stripe1:#e0f2fe; --stripe2:#bae6fd;
+      --ash:#111827; --bubble:#10b981; --dust:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);}
+    .wrap{max-width:1200px;margin:0 auto;padding:20px;}
+    h1{margin:0 0 8px;font-size:26px;}
+    .subtitle{color:var(--muted);margin-bottom:14px;}
+    .grid{display:grid;grid-template-columns:300px 1fr 260px;gap:16px;}
+    @media(max-width:1200px){.grid{grid-template-columns:300px 1fr;}}
+    .card{background:var(--panel);border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.08);}
+    .card .content{padding:16px;}
+    .section-title{font-weight:700;margin-bottom:8px;font-size:16px;}
+    .checks{display:grid;gap:8px;}
+    .checks label{display:flex;align-items:center;gap:8px;font-size:14px;}
+    canvas{width:100%;height:520px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;}
+    .legend{font-size:13px;color:var(--muted);margin-top:8px;}
+    #bubbleInfo{padding:16px;font-size:14px;color:var(--text);}
+    #bubbleInfo h3{margin:0 0 8px;font-size:16px;color:var(--accent);}
+    .info-row{margin:6px 0;}
+    .info-row b{color:#334155;}
+    .muted{color:var(--muted);}
+    .btn{cursor:pointer;padding:8px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Интерактивный ледяной керн</h1>
+    <div class="subtitle">Наведи курсор на пузырёк воздуха — справа появится состав атмосферы. Линия показывает текущую глубину и возраст.</div>
+
+    <div class="grid">
+      <!-- Панель управления -->
+      <div class="card">
+        <div class="content">
+          <div class="section-title">Управление</div>
+          <label for="region"><b>Регион:</b></label>
+          <select id="region" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:10px;">
+            <option value="antarctica">Антарктида</option>
+            <option value="greenland">Гренландия</option>
+            <option value="alpine">Высокогорный ледник</option>
+          </select>
+
+          <div class="section-title" style="margin-top:12px;">Слои</div>
+          <div class="checks">
+            <label><input type="checkbox" id="showAnnual" checked> Годичные слои</label>
+            <label><input type="checkbox" id="showAsh" checked> Вулканический пепел</label>
+            <label><input type="checkbox" id="showBubbles" checked> Пузырьки воздуха</label>
+            <label><input type="checkbox" id="showDust" checked> Пыль/загрязнение</label>
+          </div>
+
+          <div class="section-title" style="margin-top:12px;">Шкала</div>
+          <label><input type="checkbox" id="invertAge"> Инвертировать шкалу возраста</label>
+
+            <div style="margin-top:12px;">
+            <button id="exportPNG" class="btn">Экспорт PNG</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Визуализация -->
+      <div class="card">
+        <div class="content">
+          <div class="section-title">Визуализация керна</div>
+          <canvas id="coreCanvas"></canvas>
+          <div class="legend">
+            Слева — ось глубины и возраста. Красные метки — извержения: Санторини (~1600 до н.э.), Везувий (79), Хека (1104),
+            Аньёйо (1600), Лаки (1783), Тамбора (1815), Кракатау (1883), Пинатубо (1991), Тоба (~74 000 лет назад).
+          </div>
+        </div>
+      </div>
+
+      <!-- Фиксированная панель состава атмосферы -->
+      <div class="card">
+        <div class="content" id="bubbleInfo">
+          <h3>Состав атмосферы</h3>
+          <div class="info-row"><b>CO₂:</b> <span id="co2Val" class="muted">—</span></div>
+          <div class="info-row"><b>CH₄:</b> <span id="ch4Val" class="muted">—</span></div>
+          <div class="info-row"><b>N₂O:</b> <span id="n2oVal" class="muted">—</span></div>
+          <div class="info-row"><b>Глубина:</b> <span id="depthVal" class="muted">—</span></div>
+          <div class="info-row"><b>Возраст:</b> <span id="ageVal" class="muted">—</span></div>
+          <div class="muted" style="margin-top:8px;">Наведи курсор на пузырёк воздуха.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Параметры регионов (учебные значения)
+    const REGIONS = {
+      antarctica: { name:'Антарктида', length: 3000, age: 800000 },
+      greenland:  { name:'Гренландия', length: 3000, age: 120000 },
+      alpine:     { name:'Высокогорный ледник', length: 200,  age: 1000 }
+    };
+
+    // Извержения (CE, отрицательные — BCE как «лет назад» для упрощения)
+    const ERUPTIONS = [
+      { year: -1600, label: 'Санторини' },
+      { year: 79,    label: 'Везувий' },
+      { year: 1104,  label: 'Хека' },
+      { year: 1600,  label: 'Аньёйо' },
+      { year: 1783,  label: 'Лаки' },
+      { year: 1815,  label: 'Тамбора' },
+      { year: 1883,  label: 'Кракатау' },
+      { year: 1991,  label: 'Пинатубо' },
+      { year: -74000,label: 'Тоба' }
+    ];
+    const NOW_YEAR = new Date().getFullYear();
+
+    // DOM
+    const regionSel   = document.getElementById('region');
+    const showAnnual  = document.getElementById('showAnnual');
+    const showAsh     = document.getElementById('showAsh');
+    const showBubbles = document.getElementById('showBubbles');
+    const showDust    = document.getElementById('showDust');
+    const invertAge   = document.getElementById('invertAge');
+    const dustRadios  = document.querySelectorAll('input[name="dustScenario"]');
+    const exportPNG   = document.getElementById('exportPNG');
+
+    const canvas = document.getElementById('coreCanvas');
+    const ctx    = canvas.getContext('2d');
+
+    const co2Val   = document.getElementById('co2Val');
+    const ch4Val   = document.getElementById('ch4Val');
+    const n2oVal   = document.getElementById('n2oVal');
+    const depthVal = document.getElementById('depthVal');
+    const ageVal   = document.getElementById('ageVal');
+
+    // Данные пузырьков
+    let bubblesData = [];
+
+    // Утилиты
+    function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+    function getVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name) || '#000'; }
+
+    // Ось и метки извержений
+    function drawAxes(x, y, W, H, dpr, region){
+      const axisX = x - 24 * dpr;
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(axisX, y);
+      ctx.lineTo(axisX, y + H);
+      ctx.stroke();
+
+      ctx.fillStyle = getVar('--axis');
+      ctx.font = `${12*dpr}px system-ui`;
+      const ticks = 10;
+      for(let i=0;i<=ticks;i++){
+        const frac = i / ticks;
+        const ty = y + (invertAge.checked ? (1 - frac) : frac) * H;
+
+        ctx.beginPath();
+        ctx.moveTo(axisX - 6 * dpr, ty);
+        ctx.lineTo(axisX, ty);
+        ctx.stroke();
+
+        const depthM = Math.round(frac * REGIONS[region].length);
+        const ageY   = Math.round(frac * REGIONS[region].age);
+        ctx.fillText(`${depthM} м`, axisX - 56 * dpr, ty - 2 * dpr);
+        ctx.fillText(`${ageY} лет`, axisX - 56 * dpr, ty + 12 * dpr);
+      }
+
+      ERUPTIONS.forEach(e=>{
+        // «сколько лет назад»
+        let yearsAgo = e.year < 0 ? Math.abs(e.year) : (NOW_YEAR - e.year);
+        let frac = yearsAgo / REGIONS[region].age;
+        if(frac < 0.01) frac = 0.01;
+        if(frac > 1)    frac = 1;
+        const ey = y + (invertAge.checked ? (1 - frac) : frac) * H;
+
+        // Засечка и кружок
+        ctx.strokeStyle = getVar('--dust');
+        ctx.lineWidth = 2 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(axisX - 14 * dpr, ey);
+        ctx.lineTo(axisX, ey);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(axisX - 20 * dpr, ey, 4 * dpr, 0, Math.PI*2);
+        ctx.fillStyle = getVar('--dust');
+        ctx.fill();
+
+        // Подпись
+        ctx.fillStyle = getVar('--dust');
+        ctx.font = `${11*dpr}px system-ui`;
+        const labelText = e.year < 0 ? `${e.label} (~${Math.abs(e.year)} лет назад)` : `${e.label} (${e.year})`;
+        ctx.fillText(labelText, axisX - 190 * dpr, ey - 2 * dpr);
+        ctx.fillStyle = getVar('--axis');
+      });
+    }
+
+    // Основная отрисовка
+    function drawCore(){
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width  = Math.floor(canvas.clientWidth * dpr);
+      canvas.height = Math.floor(canvas.clientHeight * dpr);
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      const pad = 60 * dpr;
+      const W   = canvas.width  - pad * 2;
+      const H   = canvas.height - pad * 2;
+      const x   = pad + 30 * dpr;
+      const y   = pad;
+      const region = regionSel.value;
+
+      // фон керна
+      ctx.fillStyle = getVar('--ice');
+      ctx.fillRect(x, y, W, H);
+
+      // годичные слои
+      if(showAnnual.checked){
+        const stripes = 42;
+        for(let i=0;i<stripes;i++){
+          const ly = y + i * (H/stripes);
+          ctx.fillStyle = i % 2 ? getVar('--stripe1') : getVar('--stripe2');
+          ctx.fillRect(x, ly, W, H/stripes);
+        }
+      } else {
+        ctx.fillStyle = '#f7fafc';
+        ctx.fillRect(x, y, W, H);
+      }
+
+      // лёгкий градиент возраста для наглядности
+      const grad = ctx.createLinearGradient(x, y, x, y + H);
+      if(!invertAge.checked){
+        grad.addColorStop(0, 'rgba(37,99,235,0.10)');
+        grad.addColorStop(1, 'rgba(30,41,59,0.10)');
+      } else {
+        grad.addColorStop(0, 'rgba(30,41,59,0.10)');
+        grad.addColorStop(1, 'rgba(37,99,235,0.10)');
+      }
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, y, W, H);
+
+      // полоса пепла (учебная)
+      if(showAsh.checked){
+        let ashFrac = 0.35;
+        if(region === 'greenland') ashFrac = 0.40;
+        if(region === 'alpine')    ashFrac = 0.55;
+        const ay = y + (invertAge.checked ? (1 - ashFrac) : ashFrac) * H;
+
+        ctx.globalAlpha = 0.85;
+        ctx.fillStyle = getVar('--ash');
+        ctx.fillRect(x, ay, W, 6 * dpr);
+        ctx.globalAlpha = 1;
+
+        ctx.fillStyle = getVar('--ash');
+        for(let i=0;i<80;i++){
+          const sx = x + Math.random() * W;
+          const sy = ay + (Math.random() - 0.5) * 10 * dpr;
+          ctx.fillRect(sx, sy, 2 * dpr, 2 * dpr);
+        }
+      }
+
+      // пузырьки воздуха и их данные (малый радиус)
+      bubblesData = [];
+      if(showBubbles.checked){
+        const bubbles = 60;
+        for(let i=0;i<bubbles;i++){
+          const bx = x + Math.random()*W;
+          const by = y + Math.random()*H;
+          const r  = 4 * dpr;
+
+          ctx.beginPath();
+          ctx.arc(bx, by, r, 0, Math.PI*2);
+          ctx.fillStyle = getVar('--bubble');
+          ctx.fill();
+
+          // условная зависимость состава от глубины
+          const fracDepth = (by - y) / H;
+          const co2 = 280 + Math.round(fracDepth*60) + Math.round(Math.random()*25);  // ppm
+          const ch4 = 700 + Math.round(fracDepth*300) + Math.round(Math.random()*120); // ppb
+          const n2o = 270 + Math.round(fracDepth*60) + Math.round(Math.random()*25);   // ppb
+
+          bubblesData.push({ x:bx, y:by, r, gases:{ CO2: co2+' ppm', CH4: ch4+' ppb', N2O: n2o+' ppb' } });
+        }
+      }
+
+      // пыль/загрязнение
+      if(showDust.checked){
+        const scenario = getDustScenario();
+        const base = region === 'greenland' ? 0.7 : (region === 'alpine' ? 0.85 : 0.5);
+        const intensity = clamp(base + scenario.offset, 0.2, 1.0);
+        const dh = Math.max(12 * dpr, H * 0.06);
+        const dy = invertAge.checked ? y : (y + H - dh);
+        ctx.fillStyle = `rgba(239,68,68,${intensity})`;
+        ctx.fillRect(x, dy, W, dh);
+      }
+
+      // оси + извержения
+      drawAxes(x, y, W, H, dpr, region);
+
+      // подписи верха/низа
+      ctx.fillStyle = getVar('--axis');
+      ctx.font = `${12*dpr}px system-ui`;
+      const topLabel = invertAge.checked ? 'Древнее ↑' : 'Современное ↑';
+      const botLabel = invertAge.checked ? 'Современное ↓' : 'Древнее ↓';
+      ctx.fillText(topLabel, x + 6 * dpr, y + 14 * dpr);
+      ctx.fillText(botLabel, x + 6 * dpr, y + H - 6 * dpr);
+    }
+
+    // Наведение: линейка и фиксированная панель состава
+    function bindHover(){
+      canvas.addEventListener('mousemove', e => {
+        const rect = canvas.getBoundingClientRect();
+        const dpr  = window.devicePixelRatio || 1;
+        const region = regionSel.value;
+
+        const pad = 60 * dpr;
+        const W   = canvas.width  - pad * 2;
+        const H   = canvas.height - pad * 2;
+        const x   = pad + 30 * dpr;
+        const y   = pad;
+
+        const mouseX = (e.clientX - rect.left) * dpr;
+        const mouseY = (e.clientY - rect.top)  * dpr;
+
+        drawCore();
+
+        // Линейка и метки глубины/возраста, если внутри керна
+        if(mouseY >= y && mouseY <= y+H && mouseX >= x && mouseX <= x+W){
+          ctx.strokeStyle = getVar('--accent');
+          ctx.lineWidth = 1 * dpr;
+          ctx.beginPath();
+          ctx.moveTo(x, mouseY);
+          ctx.lineTo(x + W, mouseY);
+          ctx.stroke();
+
+          const frac = (mouseY - y) / H;
+          const depthM = Math.round(frac * REGIONS[region].length);
+          const ageY   = Math.round(frac * REGIONS[region].age);
+          const label  = invertAge.checked
+            ? `Глубина: ${REGIONS[region].length - depthM} м | Возраст: ${REGIONS[region].age - ageY} лет`
+            : `Глубина: ${depthM} м | Возраст: ${ageY} лет`;
+          ctx.fillStyle = getVar('--accent');
+          ctx.font = `${13*dpr}px system-ui`;
+          ctx.fillText(label, x + 10 * dpr, mouseY - 6 * dpr);
+        }
+
+        // Проверка пузырьков и вывод в панель (увеличенный допуск для наведения)
+        let hovered = null;
+        for(const b of bubblesData){
+          const dx = mouseX - b.x;
+          const dy = mouseY - b.y;
+          if(Math.sqrt(dx*dx + dy*dy) <= b.r + 6*dpr){
+            hovered = b; break;
+          }
+        }
+
+        if(hovered){
+          co2Val.textContent = hovered.gases.CO2;
+          ch4Val.textContent = hovered.gases.CH4;
+          n2oVal.textContent = hovered.gases.N2O;
+
+          // Оценка глубины/возраста по Y пузырька
+          const fracB = (hovered.y - y) / H;
+          const depthM = Math.round(fracB * REGIONS[region].length);
+          const ageY   = Math.round(fracB * REGIONS[region].age);
+          depthVal.textContent = invertAge.checked ? (REGIONS[region].length - depthM)+' м' : depthM+' м';
+          ageVal.textContent   = invertAge.checked ? (REGIONS[region].age - ageY)+' лет' : ageY+' лет';
+
+          // Подсветка пузырька
+          ctx.beginPath();
+          ctx.arc(hovered.x, hovered.y, hovered.r + 2*dpr, 0, Math.PI*2);
+          ctx.strokeStyle = getVar('--accent');
+          ctx.lineWidth = 1.5*dpr;
+          ctx.stroke();
+        } else {
+          co2Val.textContent = '—';
+          ch4Val.textContent = '—';
+          n2oVal.textContent = '—';
+          depthVal.textContent = '—';
+          ageVal.textContent = '—';
+        }
+      });
+
+      canvas.addEventListener('mouseleave', () => {
+        drawCore();
+        co2Val.textContent = '—';
+        ch4Val.textContent = '—';
+        n2oVal.textContent = '—';
+        depthVal.textContent = '—';
+        ageVal.textContent = '—';
+      });
+    }
+
+    // Сценарии загрязнения
+    function getDustScenario(){
+      const checked = Array.from(dustRadios).find(r => r.checked)?.value || 'low';
+      if(checked === 'low')    return { label:'Низкое',   offset: -0.15 };
+      if(checked === 'medium') return { label:'Среднее',  offset:  0.00 };
+      return { label:'Высокое', offset:  0.20 };
+    }
+
+    // Экспорт PNG
+    function bindExport(){
+      exportPNG.addEventListener('click', ()=>{
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = `ice_core_${regionSel.value}.png`;
+        link.click();
+      });
+    }
+
+    // События
+    function bindEvents(){
+      [regionSel, showAnnual, showAsh, showBubbles, showDust, invertAge].forEach(el=>{
+        el.addEventListener('change', ()=>{ drawCore(); });
+      });
+      dustRadios.forEach(r=>{
+        r.addEventListener('change', ()=>{ drawCore(); });
+      });
+      window.addEventListener('resize', drawCore);
+    }
+
+    // Init
+    bindEvents();
+    bindExport();
+    drawCore();
+    bindHover();
+  </script>
+</body>
+</html>
